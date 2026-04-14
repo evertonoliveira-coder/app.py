@@ -3,39 +3,50 @@ import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 
-# Título da Ferramenta
-st.set_page_config(page_title="Agência Pro: Ads Tool")
+# --- CONFIGURAÇÃO DE SEGURANÇA ---
+# O script agora busca a chave automaticamente nos Secrets do Streamlit
+try:
+    CHAVE_MESTRA = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=CHAVE_MESTRA)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except:
+    st.error("Erro: A chave API não foi configurada nos Secrets do Streamlit.")
+
+# --- INTERFACE LIMPA ---
+st.set_page_config(page_title="Agência Pro: Gerador de Keywords", layout="wide")
 st.title("🎯 Gerador de Keywords Fundo de Funil")
+st.write("Insira a URL abaixo para analisar a estratégia do cliente.")
 
-# Inputs na barra lateral
-with st.sidebar:
-    st.header("Configurações")
-    gemini_key = st.text_input("Chave API do Gemini:", type="password")
-    url_lp = st.text_input("URL da Landing Page do Cliente:")
+# Apenas a URL como input
+url_lp = st.text_input("URL da Landing Page ou Site:", placeholder="https://exemplo.com.br")
 
-if st.button("Analisar Landing Page"):
-    if not gemini_key or not url_lp:
-        st.error("Por favor, preencha a chave do Gemini e a URL.")
+if st.button("Gerar Inteligência de Campanha"):
+    if not url_lp:
+        st.warning("Por favor, insira uma URL válida.")
     else:
-        with st.spinner("Lendo a página e gerando ideias..."):
+        with st.spinner("A IA está analisando a página..."):
             try:
-                # 1. Tenta ler o conteúdo da URL
+                # 1. Raspagem da página
                 res = requests.get(url_lp, timeout=10)
                 soup = BeautifulSoup(res.text, 'html.parser')
-                texto = f"{soup.title.text if soup.title else ''} " + " ".join([p.text for p in soup.find_all('p')[:3]])
+                texto = f"{soup.title.text if soup.title else ''} " + " ".join([p.text for p in soup.find_all('p')[:5]])
                 
-                # 2. Configura a IA
-                genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                
-                prompt = f"Com base neste conteúdo de Landing Page: '{texto}', gere 10 palavras-chave de fundo de funil (foco em conversão) e 10 palavras negativas."
+                # 2. Prompt Estruturado para a Agência
+                prompt = f"""
+                Analise esta Landing Page: '{texto}'
+                Como um especialista em Google Ads focado em alta conversão:
+                1. Liste 10 palavras-chave de 'Fundo de Funil' (intenção de compra imediata).
+                2. Liste 15 palavras-chave 'Negativas' para evitar desperdício de verba.
+                3. Sugira um título de anúncio magnético baseado na oferta principal.
+                Responda com formatação clara usando Bullet Points.
+                """
                 
                 response = model.generate_content(prompt)
                 
-                # 3. Exibe o resultado
-                st.subheader("🚀 Sugestões da IA")
-                st.write(response.text)
-                st.success("Análise concluída!")
+                # 3. Exibição dos resultados
+                st.divider()
+                st.markdown(response.text)
+                st.success("Análise finalizada com sucesso!")
                 
             except Exception as e:
-                st.error(f"Erro ao processar: {e}")
+                st.error(f"Não conseguimos ler esta URL. Verifique se o site permite acesso ou tente outra. Erro: {e}")
