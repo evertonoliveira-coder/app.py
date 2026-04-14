@@ -3,50 +3,84 @@ import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 
-# --- CONFIGURAÇÃO DE SEGURANÇA ---
-# O script agora busca a chave automaticamente nos Secrets do Streamlit
+# --- CONFIGURAÇÃO DE SEGURANÇA E MODELO ---
 try:
+    # Busca a chave nos Secrets do Streamlit
     CHAVE_MESTRA = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=CHAVE_MESTRA)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except:
-    st.error("Erro: A chave API não foi configurada nos Secrets do Streamlit.")
+    
+    # Usar 'gemini-1.5-flash-latest' resolve o erro 404 em chaves gratuitas
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+except Exception as e:
+    st.error(f"Erro na configuração: Verifique se a chave está nos Secrets. Detalhes: {e}")
 
-# --- INTERFACE LIMPA ---
-st.set_page_config(page_title="Agência Pro: Gerador de Keywords", layout="wide")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Agência Pro: Ads Tool", layout="wide", page_icon="🎯")
+
+# CSS para esconder o menu do Streamlit e focar no conteúdo (bom para embed)
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("🎯 Gerador de Keywords Fundo de Funil")
-st.write("Insira a URL abaixo para analisar a estratégia do cliente.")
+st.write("Insira a URL abaixo para extrair inteligência de campanha diretamente da Landing Page.")
 
-# Apenas a URL como input
+# --- INPUT DO USUÁRIO ---
 url_lp = st.text_input("URL da Landing Page ou Site:", placeholder="https://exemplo.com.br")
 
 if st.button("Gerar Inteligência de Campanha"):
     if not url_lp:
         st.warning("Por favor, insira uma URL válida.")
     else:
-        with st.spinner("A IA está analisando a página..."):
+        with st.spinner("Lendo o site e consultando a IA..."):
             try:
-                # 1. Raspagem da página
-                res = requests.get(url_lp, timeout=10)
-                soup = BeautifulSoup(res.text, 'html.parser')
-                texto = f"{soup.title.text if soup.title else ''} " + " ".join([p.text for p in soup.find_all('p')[:5]])
+                # 1. RASPAGEM DA PÁGINA (Com cabeçalhos para evitar bloqueio 403/404)
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                }
                 
-                # 2. Prompt Estruturado para a Agência
+                # Timeout de 15 segundos para não travar o app
+                res = requests.get(url_lp, headers=headers, timeout=15)
+                res.raise_for_status() 
+                
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                # Captura Título e os primeiros parágrafos relevantes
+                titulo = soup.title.text if soup.title else "Sem título"
+                paragrafos = [p.text for p in soup.find_all('p') if len(p.text) > 20]
+                conteudo_extraido = f"Título: {titulo} | Conteúdo: {' '.join(paragrafos[:5])}"
+
+                # 2. CONSULTA AO GEMINI
                 prompt = f"""
-                Analise esta Landing Page: '{texto}'
-                Como um especialista em Google Ads focado em alta conversão:
-                1. Liste 10 palavras-chave de 'Fundo de Funil' (intenção de compra imediata).
-                2. Liste 15 palavras-chave 'Negativas' para evitar desperdício de verba.
-                3. Sugira um título de anúncio magnético baseado na oferta principal.
-                Responda com formatação clara usando Bullet Points.
+                Você é um gestor de tráfego sênior. Com base neste conteúdo de site: '{conteudo_extraido}'
+                
+                1. Liste 10 palavras-chave de 'Fundo de Funil' (foco em quem quer comprar/contratar agora).
+                2. Liste 15 palavras-chave 'Negativas' (termos curiosos, informativos ou fora de contexto).
+                3. Sugira 3 títulos de anúncios magnéticos para Google Ads.
+                
+                Responda em Português, formatado com Bullet Points e negritos.
                 """
                 
                 response = model.generate_content(prompt)
                 
-                # 3. Exibição dos resultados
+                # 3. EXIBIÇÃO DOS RESULTADOS
                 st.divider()
+                st.markdown("### 🚀 Resultado da Análise Estratégica")
                 st.markdown(response.text)
                 st.success("Análise finalizada com sucesso!")
-                
+
+            except requests.exceptions.HTTPError as err:
+                st.error(f"O site do cliente bloqueou nossa leitura (Erro {err.response.status_code}). Tente outra URL ou verifique se o site está no ar.")
             except Exception as e:
-                st.error(f"Não conseguimos ler esta URL. Verifique se o site permite acesso ou tente outra. Erro: {e}")
+                # Se o erro for 429, é excesso de uso da chave gratuita
+                if "429" in str(e):
+                    st.error("Limite de uso atingido (Cota Gratuita). Aguarde 1 minuto e tente novamente.")
+                else:
+                    st.error(f"Ocorreu um erro: {e}")
+
+# Rodapé simples
+st.caption("Ferramenta interna - Orgânica Digital")
