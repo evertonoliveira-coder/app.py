@@ -3,89 +3,106 @@ import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 
-# --- CONFIGURAÇÃO PARA CHAVE GRATUITA (FREE TIER) ---
-# O segredo para evitar o erro 404 em chaves gratuitas é usar o caminho completo 'models/...'
-try:
-    if "GEMINI_API_KEY" in st.secrets:
-        CHAVE_MESTRA = st.secrets["GEMINI_API_KEY"]
-        genai.configure(api_key=CHAVE_MESTRA)
-        # Nomenclatura específica para chaves do Google AI Studio Free
-        model = genai.GenerativeModel('gemini-1.5-pro')
-    else:
-        st.error("Erro: A chave GEMINI_API_KEY não foi encontrada nos Secrets do Streamlit.")
-except Exception as e:
-    st.error(f"Erro na inicialização da IA: {e}")
+# --- 1. CONFIGURAÇÃO DA IA (BLINDADA PARA CHAVE GRATUITA) ---
+def configurar_ia():
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            api_key = st.secrets["GEMINI_API_KEY"]
+            genai.configure(api_key=api_key)
+            # Usamos o nome padrão. Se a chave for nova e de um 'New Project', 
+            # o erro 404 não deve ocorrer.
+            return genai.GenerativeModel('gemini-1.5-flash')
+        else:
+            st.error("Chave 'GEMINI_API_KEY' não encontrada nos Secrets do Streamlit.")
+            return None
+    except Exception as e:
+        st.error(f"Erro ao configurar IA: {e}")
+        return None
 
-# --- CONFIGURAÇÃO DA PÁGINA (Interface Limpa para Embed) ---
+model = configurar_ia()
+
+# --- 2. CONFIGURAÇÃO DA INTERFACE (OTIMIZADA PARA EMBED) ---
 st.set_page_config(page_title="Agência Pro: Ads Tool", layout="wide", page_icon="🎯")
 
-# CSS para remover menus desnecessários quando embutido no seu site
+# CSS para limpar a interface e parecer nativo no seu site
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     [data-testid="stHeader"] {display: none;}
+    .main {padding-top: 1rem;}
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🎯 Planejador de Palavras-Chave")
 st.write("Extraia inteligência estratégica diretamente da Landing Page do cliente.")
 
-# --- INPUT DO USUÁRIO ---
+# --- 3. CAMPO DE ENTRADA ---
 url_lp = st.text_input("URL da Landing Page ou Site:", placeholder="https://exemplo.com.br")
 
 if st.button("Gerar Inteligência de Campanha"):
     if not url_lp:
         st.warning("Por favor, insira uma URL válida.")
+    elif not model:
+        st.error("A IA não está configurada. Verifique os Secrets.")
     else:
-        with st.spinner("Lendo o site e consultando a IA..."):
+        with st.spinner("Analisando site e consultando a IA..."):
             try:
-                # 1. RASPAGEM DA PÁGINA (Com User-Agent para evitar bloqueios como o da Yathon)
+                # A. RASPAGEM DA PÁGINA (Fingindo ser um navegador real)
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+                    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
                 }
                 
-                res = requests.get(url_lp, headers=headers, timeout=15)
-                res.raise_for_status() 
+                # Faz a requisição com timeout para não travar
+                response_site = requests.get(url_lp, headers=headers, timeout=20)
+                response_site.raise_for_status()
                 
-                soup = BeautifulSoup(res.text, 'html.parser')
+                # B. EXTRAÇÃO DE TEXTO
+                soup = BeautifulSoup(response_site.text, 'html.parser')
                 
-                # Captura Título e conteúdo textual principal
-                titulo = soup.title.text if soup.title else "Site sem título"
-                # Pega apenas os parágrafos com conteúdo real (evita menus e rodapés vazios)
-                paragrafos = [p.text.strip() for p in soup.find_all('p') if len(p.text) > 30]
-                texto_limpo = f"Título: {titulo} | Conteúdo: {' '.join(paragrafos[:6])}"
-
-                # 2. PROMPT ESTRUTURADO PARA O GEMINI
+                # Remove scripts e estilos para não confundir a IA
+                for script_or_style in soup(["script", "style"]):
+                    script_or_style.decompose()
+                
+                titulo = soup.title.string if soup.title else "Sem título"
+                # Pega os primeiros 1500 caracteres de texto limpo
+                texto_pag = soup.get_text(separator=' ', strip=True)[:1500]
+                
+                # C. PROMPT ESTRUTURADO
                 prompt = f"""
-                Você é um Especialista em Google Ads e SEO. Analise este conteúdo de site: '{texto_limpo}'
+                Você é um Especialista em Google Ads. Analise o conteúdo deste site:
+                TITULO: {titulo}
+                CONTEÚDO: {texto_pag}
                 
-                Com base no serviço/produto oferecido, gere:
-                1. Uma lista com 10 Palavras-chave de Fundo de Funil (com intenção de conversão).
-                2. Uma lista com 15 Palavras-chave Negativas (termos que trazem tráfego desqualificado).
-                3. Três sugestões de Títulos de Anúncios focados em benefícios.
+                Com base nisso, gere:
+                1. Uma lista com 10 Palavras-chave de 'Fundo de Funil' (intenção de compra/serviço).
+                2. Uma lista com 15 Palavras-chave 'Negativas' (evitar cliques curiosos).
+                3. Três sugestões de Títulos para Anúncios (RSA) focados em conversão.
                 
-                Responda em Português do Brasil, usando negritos e bullet points.
+                Formate em Português (Brasil) usando Bullet Points e Negritos.
                 """
                 
-                # 3. CHAMADA DA IA
-                response = model.generate_content(prompt)
+                # D. CHAMADA DA IA
+                resposta_ia = model.generate_content(prompt)
                 
-                # 4. EXIBIÇÃO DOS RESULTADOS
+                # E. EXIBIÇÃO DOS RESULTADOS
                 st.divider()
                 st.markdown("### 🚀 Estratégia Recomendada")
-                st.markdown(response.text)
-                st.success("Análise finalizada com sucesso!")
+                st.markdown(resposta_ia.text)
+                st.success("Análise concluída!")
 
-            except requests.exceptions.HTTPError as err:
-                st.error(f"O site bloqueou o acesso automático (Erro {err.response.status_code}). Tente outra URL.")
+            except requests.exceptions.RequestException as e:
+                st.error(f"Erro ao acessar o site: {e}. O site pode estar bloqueando acessos automáticos.")
             except Exception as e:
-                # Tratamento amigável para limite de cota da chave gratuita (Erro 429)
+                # Tratamento para erro de cota (429) ou outros erros de API
                 if "429" in str(e):
-                    st.error("A cota gratuita de consultas foi atingida. Aguarde 60 segundos e tente novamente.")
+                    st.error("Limite de uso atingido (Cota Gratuita). Aguarde 60 segundos.")
+                elif "404" in str(e):
+                    st.error("Erro 404: Modelo não encontrado. Isso geralmente indica que sua Chave API precisa ser recriada em um 'NEW PROJECT' no Google AI Studio.")
                 else:
-                    st.error(f"Erro ao processar: {e}")
+                    st.error(f"Erro inesperado: {e}")
 
-# Rodapé discreto
-st.caption("Ferramenta Interna - Orgânica Digital")
+# Rodapé
+st.caption("Ferramenta de Inteligência - Orgânica Digital")
