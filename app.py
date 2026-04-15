@@ -10,7 +10,7 @@ try:
         CHAVE_MESTRA = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=CHAVE_MESTRA)
         # Nomenclatura específica para chaves do Google AI Studio Free
-        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-pro')
     else:
         st.error("Erro: A chave GEMINI_API_KEY não foi encontrada nos Secrets do Streamlit.")
 except Exception as e:
